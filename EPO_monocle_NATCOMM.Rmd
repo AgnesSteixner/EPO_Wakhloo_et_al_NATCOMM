@@ -1,0 +1,227 @@
+---
+title: "EPO monocle Nature communications"
+output: html_notebook
+---
+
+```{r setup}
+knitr::opts_knit$set(root.dir = normalizePath("//820-filer.em.mpg.de/820-DKN/Steixner/AGNES/dropseq/Agnes_EPO/")) #set working directory if not the notebook's directory
+```
+
+
+```{r}
+##########INFO
+
+#THIS NOTEBOOK WAS CREATED TO PERFORM TRAJECTORY ANALYSIS OF THE IMMATURE AND MATURE GLUTAMATERGIC CLUSTER1 IN MONOCLE2 FOR THE MANUSCRIPT BY WAKHLOO ET AL,2020 (NATURE COMM)
+#THE FIRST PART CONTAINS THE PREPROCESSING; INCLUDING RE-CLUSTERING OF THE TWO CLUSTERS IN MONOCLE AND TRAJECTORY CONSTRUCTION 
+#THE SECOND PART CONTAINS GRAPHS AND STATISTICS AS SHOWN IN THE PAPER
+```
+
+
+```{r}
+set.seed(545) #for reproducibility
+#load required libraries
+library(monocle)
+library(dplyr)
+library(ggpubr)
+```
+
+```{r}
+#read processed Seurat object (as shown in Figure 2b/c)
+epo<-readRDS('EPO_wakhloo_clusters.rds')
+```
+
+
+```{r}
+########## PART I: PREPROCESSING
+#import raw data to monocle
+#prepare parts of CDS object
+data <- as(as.matrix(epo@raw.data), 'sparseMatrix')
+
+pd <- new('AnnotatedDataFrame', data = epo@meta.data)
+pd@data$ident<-epo@ident
+
+fData <- data.frame(gene_short_name = row.names(data), row.names = row.names(data))
+fd <- new('AnnotatedDataFrame', data = fData)
+
+#Construct monocle cds
+EPO <- newCellDataSet(data,
+                         phenoData = pd,
+                         featureData = fd,
+                         lowerDetectionLimit = 0.5,
+                         expressionFamily = negbinomial.size())
+
+#keep only the two clusters in question, i.e. immature and mature glutamatergic1
+valid_cells<-c(row.names(subset(pData(EPO), 
+            ident=='Immature Glutamatergic')),
+            row.names(subset(pData(EPO),
+            ident=='Mature Glutamatergic1')))
+EPO<-EPO[,valid_cells]
+EPO <- estimateSizeFactors(EPO) #estimate size factors and dispersion as recommended
+EPO <- estimateDispersions(EPO)
+
+EPO<-detectGenes(EPO, min_expr = 0.1) #set minimal gene detection threshold at 10%
+pData(EPO)$UMI <- Matrix::colSums(exprs(EPO)) #recalculate UMI count
+
+EPO_traj <- detectGenes(EPO, min_expr = 0.1) #make new object for trajectory analysis (502 cells)
+fData(EPO_traj)$use_for_ordering <-fData(EPO_traj)$num_cells_expressed > 0.05 * ncol(EPO_traj) #define pool of genes that can be used for ordering (expressed in more than 5% of cells)
+table(fData(EPO_traj)$use_for_ordering)
+ 
+```
+```{r}
+#make variance plot
+plot_pc_variance_explained(EPO_traj, return_all = FALSE)
+```
+
+```{r}
+#perform dimension reduction
+my_cds_subset <- reduceDimension(EPO_traj,
+                                 max_components = 2,
+                                 norm_method = 'log',
+                                 num_dim = 10,
+                                 reduction_method = 'tSNE',
+                                 verbose = TRUE)
+#perform initial cell clustering and determine delta and rho thresholds
+my_cds_subset <- clusterCells(my_cds_subset, verbose = FALSE)
+plot_rho_delta(my_cds_subset, rho_threshold = 2, delta_threshold = 10)
+```
+
+```{r}
+#cluster cells with the identified thresholds
+my_cds_subset <- clusterCells(my_cds_subset,
+                              rho_threshold = 2,
+                              delta_threshold = 10,
+                              skip_rho_sigma = T,
+                              verbose = FALSE)
+#plot final clustering
+table(pData(my_cds_subset)$Cluster) #three clusters identified, plot their cell numbers
+plot_cell_clusters(my_cds_subset) #color by monocle cluster
+plot_cell_clusters(my_cds_subset, color_by = 'ident') #color by Seurat identity
+plot_cell_clusters(my_cds_subset, color_by = 'stim') #color by treatment condition
+```
+
+```{r}
+#define DEG between monocle clusters
+clustering_DEG_genes <- differentialGeneTest(my_cds_subset,
+                                             fullModelFormulaStr = '~Cluster',
+                                             cores = 8)
+
+```
+
+```{r}
+set.seed(545) #for reproducibility
+my_ordering_genes <-row.names(subset(clustering_DEG_genes, qval<0.01)) #select ordering genes by qval
+my_cds_subset <- setOrderingFilter(my_cds_subset, ordering_genes = my_ordering_genes) #use genes for filtering
+my_cds_subset <- reduceDimension(my_cds_subset, reduction_method = 'DDRTree') #reduce dimension
+my_cds_subset <- orderCells(my_cds_subset) #order cells
+
+```
+
+```{r}
+####PREPROCESSING DONE
+####PART II: PLOTTING AND CALCULATIONS
+```
+
+
+```{r}
+
+####Figure 2f
+#trajectory colored by pseudotime
+
+plot_cell_trajectory(my_cds_subset, color_by = "Pseudotime")+ scale_color_gradient(low = 'lightblue', high = 'navyblue')+theme(axis.text = element_text(size = 14, color = 'black'), axis.title = element_text(size = 14), legend.text = element_text(size = 12), legend.title = element_text(size = 13), legend.position = c(0.4,0.8), legend.direction="horizontal")+theme(plot.margin = unit(c(0.18,0.5,0,0), 'cm'))+
+  coord_cartesian(xlim = c(-20, 30), ylim = c(-5,5), expand = F, clip = 'off')  
+```
+
+```{r}
+#get cell numbers per monocle identity (Cluster 1, 2, or 3) per condition (EPO vs. PLACEBO)
+#pull data from cds and put into dataframe
+t<-data.frame(my_cds_subset@phenoData@data$Pseudotime, my_cds_subset@phenoData@data$stim, my_cds_subset@phenoData@data$ident, my_cds_subset@phenoData@data$Cluster)
+#create table to get numbers for Fisher test
+t2<-t %>%
+  group_by(my_cds_subset.phenoData.data.stim, my_cds_subset.phenoData.data.Cluster) %>%
+  summarize(n())
+t2
+
+```
+
+```{r}
+#calculate if monocle immature cluster cell number is increased under EPO (manuscript page xxx)
+
+fisher.test(matrix(c(6, 390-6,34, 583-34), nrow = 2))
+```
+
+```{r}
+####Figure 2g
+#trajectory colored by seurat cluster identity
+
+plot_cell_trajectory(my_cds_subset, color_by = "finalIdent")+ scale_color_manual(values=c("#00BF7D", "#F8766D"))+
+  theme(axis.text = element_text(size = 14, colour = 'black'), axis.title = element_text(size = 14), legend.text = element_text(size = 13), legend.title = element_blank(),legend.position = c(0.1,1.1),legend.direction="horizontal")+
+  theme(plot.margin = unit(c(0.18,0.5,0,0), 'cm'))+
+  coord_cartesian(xlim = c(-20, 30), ylim = c(-5,5), expand = F, clip = 'off')  #colored by seurat identity
+
+```
+
+```{r}
+####Figure 2g
+#test for difference in pseudotime between immature and mature glutamatergic cluster1
+wilcox.test(my_cds_subset.phenoData.data.Pseudotime~my_cds_subset.phenoData.data.ident, t)
+# display pseudotime mean per cluster
+aggregate(my_cds_subset.phenoData.data.Pseudotime ~ my_cds_subset.phenoData.data.ident, t, mean)
+```
+
+```{r}
+#####Figure 2g
+#plot pseudotime differences between immature and mature cluster
+#reorder levels for correct ordering on x-axis
+t$my_cds_subset.phenoData.data.ident<-ordered(t$my_cds_subset.phenoData.data.ident, levels=c('Immature Glutamatergic', 'Mature Glutamatergic1'))
+
+#plot
+ggbarplot(t, x='my_cds_subset.phenoData.data.ident', y='my_cds_subset.phenoData.data.Pseudotime', add='mean_se',  fill='my_cds_subset.phenoData.data.ident',palette=c("#00BF7D", "#F8766D"),add.params = list(size = 1.1), width =0.8)+
+theme(axis.title.x=element_blank(),axis.text.x=element_blank(), axis.text = element_text(size=30), axis.title = element_text(size = 32))+ylab('Pseudotime')+theme(legend.position = 'none')+geom_jitter(shape=21, color='black', fill='transparent',position = position_jitter(0.1), size=2)+
+coord_cartesian(ylim = c(-0.5,50), xlim = c(0.45,2.45), expand = F)+theme(aspect.ratio = 1/0.8)
+
+```
+
+```{r}
+####Figure 2h
+#trajectory facetted by treatment
+
+plot_cell_trajectory(my_cds_subset, color_by = "stim")+theme(axis.text = element_text(size = 14, color = 'black'), axis.title = element_text(size = 14), 
+   legend.text = element_text(size = 12))+theme(plot.margin = unit(c(0,0.5,0,0), 'cm'))+theme(legend.position ='none')+ 
+  scale_fill_discrete(name = "Dose", labels = c("A", "B", "C"))+
+  coord_cartesian(xlim = c(-20, 30), ylim = c(-5,5.2), expand = F, clip = 'off')+ theme(panel.spacing = unit(5, "lines"))+
+    facet_wrap(~stim, nrow = 1)+ scale_color_manual(values=c("black", "red")) #colored by treatment
+
+```
+
+```{r}
+####Figure 2h
+#test for difference in pseudotime between Placebo and EPO
+wilcox.test(my_cds_subset.phenoData.data.Pseudotime~my_cds_subset.phenoData.data.stim, t) 
+# display pseudotime mean per treatment group
+aggregate(my_cds_subset.phenoData.data.Pseudotime ~ my_cds_subset.phenoData.data.stim, t, mean)
+
+```
+
+```{r}
+####Figure 2h
+#plot pseudotime differences between treatment groups in bargraph
+ggbarplot(t, x='my_cds_subset.phenoData.data.stim', y='my_cds_subset.phenoData.data.Pseudotime', add='mean_se', add.params = (list(size = 1.1, color='grey30')), width = 0.85, fill='my_cds_subset.phenoData.data.stim',palette=c("black", "red"))+theme(axis.title.x=element_blank(), axis.text.x = element_blank())+ylab('Pseudotime')+theme(legend.position = 'none')+geom_jitter(color='black', fill='white',position = position_jitter(0.1), shape=21, size=2)+theme(axis.text = element_text(size=30), axis.title = element_text(size = 32))+coord_cartesian(ylim = c(-0.5,50), xlim = c(0.45,2.45), expand = F)+theme(aspect.ratio = 1/0.8)
+
+```
+
+```{r}
+####Supplementary figure 3a
+#trajectory colored by monocle cluster identity
+
+plot_cell_trajectory(my_cds_subset, color_by = "Cluster") + scale_color_manual(values=c("brown", "orange", 'grey'))+
+  theme(axis.text = element_text(size = 15, colour = 'black'), axis.title = element_text(size = 15), legend.text = element_text(size = 14), legend.title = element_text(size = 15))+
+  theme(plot.margin = unit(c(0,0.5,0,0), 'cm'))+
+  coord_cartesian(xlim = c(-20, 30), ylim = c(-5,5), expand = F, clip = 'off')#colored by monocle identity #colored by monocle cluster
+
+```
+
+
+```{r}
+sessionInfo()
+```
+
