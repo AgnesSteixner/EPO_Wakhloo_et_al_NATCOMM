@@ -4,7 +4,7 @@ output: html_notebook
 ---
 
 ```{r setup}
-knitr::opts_knit$set(root.dir = normalizePath("//820-filer.em.mpg.de/820-DKN/Steixner/AGNES/dropseq/Agnes_EPO/")) #set working directory if not the notebook's directory
+knitr::opts_knit$set(root.dir = normalizePath("../")) #set working directory if not the notebook's directory
 ```
 
 
