@@ -1,5 +1,5 @@
-# EPO_monocle
-Wakhloo et al. - Nature Communications code for trajectory analysis in monocle
+# EPO_Seurat_Monocle2
+Wakhloo et al. - Nature Communications code for scRNAseq analysis in Seurat and trajectory analysis in Monocle2
 
 The code to analyze and reproduce the results of the scRNAseq trajectory analysis (Monocle2) shown in Figure 2 in the manuscript.
 
