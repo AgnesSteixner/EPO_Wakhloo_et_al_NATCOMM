@@ -1,5 +1,5 @@
 # EPO_Seurat_Monocle2
-Wakhloo et al. - Nature Communications code for scRNAseq analysis in Seurat and trajectory analysis in Monocle2
+Wakhloo et al. - Nature Communications code for scRNAseq analysis in Seurat (QC, CCA, clustering, marker calculation) and Monocle2 (trajectory analysis).
 
 ABSTRACT
 
