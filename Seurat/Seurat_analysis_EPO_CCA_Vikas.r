@@ -6,7 +6,7 @@ library(Matrix)
 set.seed(786)
 
 
-dump_all<-read.csv(file="../DATA/merged.csv")
+dump_all<-read.csv(file="../DATA/wakhloo_et_al_NATCOMM.csv")
 rownames(dump_all)<-dump_all$GENE
 dump_all$GENE<-NULL
 dump_all[is.na(dump_all)]<-0
